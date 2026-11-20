@@ -1,6 +1,7 @@
-// Token Radar's dashboard. It reads window.RADAR (written beside dashboard/ by main.ts) and
-// renders the ranked board, a filterable table, a per-protocol detail drawer with the model's own
-// inputs and the protocol's farm plan. No network: every byte it shows is in data.js.
+// Token Radar's dashboard. It reads window.RADAR (written beside dashboard/ by
+// main.ts) and renders the ranked board, a filterable table, and a per-protocol
+// detail drawer with the model's own inputs and the protocol's farm plan.
+// No network: every byte it shows is already in data.js.
 (function () {
   'use strict';
 
@@ -10,6 +11,8 @@
   var state = { q: '', category: 'all', chain: 'all', watchOnly: false, tab: 'pre-token', sort: 'implied', dir: -1, selected: null };
 
   var usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+
+  // Short money: $2.75B, $420.9M, $114K, or the full figure below a thousand.
   function fmtUsd(n) {
     if (n === null || n === undefined || !isFinite(n)) return 'n/a';
     if (Math.abs(n) >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
@@ -26,10 +29,14 @@
     if (days >= 365) return (days / 365).toFixed(1) + 'y';
     return Math.max(0, Math.round(days)) + 'd';
   }
+  // Four decimals, trailing zeroes trimmed, but never a bare decimal point.
   function fmtMult(n) { return (Math.round(n * 10000) / 10000).toFixed(4).replace(/0+$/, '').replace(/\.$/, '.0'); }
 
-  // The model in one function: the page recomputes a row from the snapshot figures and checks the
-  // number board.json carries, so the page's code and the board's data are visibly the same arithmetic.
+  // The model, run again in the page: a row is recomputed from its snapshot figures
+  // and checked against the number board.json carries, so the page's arithmetic and
+  // the board's data are visibly the same calculation. Keep the operations in the
+  // same order as lib/model.ts's impliedValue: the drawer compares the two numbers,
+  // so any drift between them shows up as a stale-data warning instead of a match.
   function impliedOf(row, model) {
     var growth = Math.min(model.growth_cap, Math.max(model.growth_floor, row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d));
     var growthMult = 1 + (growth / 100) * model.growth_weight;
@@ -40,6 +47,8 @@
     return Math.max(1, Math.round(model.scale * Math.pow(Math.max(row.tvl_usd, 1), model.tvl_exponent) * growthMult * maturity * breadth));
   }
 
+  // A tiny element builder: 'class' and 'text' are shortcuts, 'on*' keys are listeners,
+  // anything else becomes an attribute, and the rest of the arguments are children.
   function el(tag, attrs) {
     var node = document.createElement(tag);
     if (attrs) {
@@ -61,8 +70,9 @@
     return node;
   }
 
-  // The farm plan is the same derivation main.ts writes to board.json: category, chains, TVL and age
-  // decide the action, the capital, the hold and every cost and time. No name is special-cased.
+  // The farm plan is the same derivation main.ts writes into board.json: category,
+  // chains, TVL and age decide the action, the capital, the hold and every cost
+  // and time. No name is special-cased.
   function chainOf(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
   function capitalFor(p) {
     if (p.tvl_usd >= 5e9) return 250;
@@ -166,6 +176,7 @@
     return steps.map(stepText);
   }
 
+  // The filter state lives in the URL hash, so a view can be linked and shared.
   function readHash() {
     var hash = window.location.hash.replace(/^#/, '');
     if (!hash) return;

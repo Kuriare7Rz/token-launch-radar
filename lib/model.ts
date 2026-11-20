@@ -1,28 +1,31 @@
-// Token Radar's value model (radar-2): one sealed snapshot in, one ranked board out.
+// Token Radar — the radar-2 value model.
 //
-// The board ranks every protocol that records no token and is not obviously a product of a token
-// that already trades. The snapshot's watchlist is always covered in full; the radar then adds every
-// other pre-token protocol that passes the same filter, above the floor as well as below it, because
-// the watchlist is a floor, never a ceiling. Protocols whose token already trades are kept apart and
-// shown with their market's own value, never mixed into the ranking.
+// One sealed snapshot goes in; one ranked board comes out. The board lists every
+// protocol that records no token and is not plainly a product of a token that
+// already trades. The snapshot's own watchlist is always covered in full, and the
+// radar adds every other pre-token protocol that passes the same filter, whether
+// its TVL sits above the floor or below it — the watchlist is a floor, not a
+// ceiling. Protocols whose token already trades are set aside and shown at their
+// market's own value, never mixed into the ranking.
 //
-// Implied value follows only from the snapshot's own figures. A token's plausible value grows slower
-// than the TVL behind it, so the base is sublinear in TVL; seven-day growth bends it up or down;
-// the time a protocol has run with no token bends it up, then gently down again once the launch
-// window has stayed shut for years; and a protocol live on more chains earns a small breadth bonus.
+// Implied value is built only from the snapshot's figures. Value grows slower
+// than the TVL behind it, so the base is sublinear in TVL; the seven-day change
+// bends it up or down; the time a protocol has run without a token bends it up,
+// then slowly down again after the launch window has stayed shut for years; and
+// running on more chains earns a small breadth bonus. The exact arithmetic:
 //
-//   base      = SCALE x tvl_usd ^ TVL_EXPONENT
-//   growth    = clamp(change_7d, GROWTH_FLOOR, GROWTH_CAP) per cent (unreported: 0)
-//   growthMul = 1 + (growth / 100) x GROWTH_WEIGHT
-//   age       = days from listed_at to as_of (unknown: UNKNOWN_AGE_DAYS)
-//   maturity  = MATURITY_FLOOR + (1 - MATURITY_FLOOR) x min(age, MATURITY_DAYS) / MATURITY_DAYS
-//               x DECAY ^ max(age - MATURITY_DAYS, 0) / 365 when age runs past MATURITY_DAYS
-//   breadth   = 1 + BREADTH_STEP x min(max(chains - 1, 0), BREADTH_CAP)
-//   implied   = max(1, round(base x growthMul x maturity x breadth))
+//   base      = SCALE * tvl_usd ^ TVL_EXPONENT
+//   growth    = clamp(change_7d, GROWTH_FLOOR, GROWTH_CAP) in percent (0 if unreported)
+//   growthMul = 1 + (growth / 100) * GROWTH_WEIGHT
+//   age       = days from listed_at to as_of (UNKNOWN_AGE_DAYS when unknown)
+//   maturity  = MATURITY_FLOOR + (1 - MATURITY_FLOOR) * min(age, MATURITY_DAYS) / MATURITY_DAYS,
+//               times DECAY ^ (age - MATURITY_DAYS) / 365 once age passes MATURITY_DAYS
+//   breadth   = 1 + BREADTH_STEP * min(max(chains - 1, 0), BREADTH_CAP)
+//   implied   = max(1, round(base * growthMul * maturity * breadth))
 //
-// No protocol name is ever special-cased: the same function scores every row.
+// No protocol name is special-cased anywhere: one function scores every row.
 
-/** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
+/** One protocol entry from the snapshot: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
   slug: string;
   name: string;
@@ -80,14 +83,14 @@ export const MODEL_VERSION = 'radar-2';
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
 
-/** A farm step: the action, what it costs, and how long it takes. */
+/** One farm step: the action, what it costs, and how long it takes. */
 export interface FarmStep {
   text: string;
   cost: string;
   time: string;
 }
 
-/** One row of board.json: the ranked board's row. */
+/** One row of board.json: a ranked board row. */
 export interface BoardRow {
   rank: number;
   slug: string;
@@ -116,7 +119,7 @@ export interface BoardRow {
   farm_steps: string[];
 }
 
-/** The dashboard's compact view of one row, with farm plans generated in the page. */
+/** A board row in the dashboard's compact form; the page generates the farm plan itself. */
 export interface RadarRow {
   rank: number;
   slug: string;
@@ -177,7 +180,7 @@ function finite(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-/** A whole day count from `from` to `to`, clamped at zero; null when either date is absent or bad. */
+/** Whole days from `from` to `to`, floored at zero; null when either date is absent or unparseable. */
 export function ageDays(asOf: string, listedAt: string | null): number | null {
   if (listedAt === null) return null;
   const a = Date.parse(`${asOf}T00:00:00Z`);
@@ -186,7 +189,9 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
   return Math.max(0, Math.floor((a - b) / DAY_MS));
 }
 
-/** The four multipliers and the implied value one protocol gets under `model`. */
+/** The four multipliers and the implied value one protocol gets under `model`.
+ *  The `base` in the result is the rounded base; `implied` is computed from the
+ *  unrounded base, so the two numbers differ by at most a dollar of rounding. */
 export function impliedValue(
   protocol: SnapshotProtocol,
   asOf: string,
@@ -207,7 +212,7 @@ export function impliedValue(
   return { implied, base: Math.round(base), growthPct, growthMult, maturityMult, breadthMult, age };
 }
 
-/** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
+/** DefiLlama's version-marker rule: a name ending in a release number is a pool of another protocol. */
 const VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
 
 /** Categories that are plainly a product of an asset or a chain that already trades, not a protocol of their own. */
@@ -241,7 +246,7 @@ export function isRankable(p: SnapshotProtocol): boolean {
   );
 }
 
-/** The snapshot's protocol by slug. */
+/** The snapshot's protocols keyed by slug. */
 function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
   return new Map(protocols.map((p) => [p.slug, p]));
 }
@@ -296,7 +301,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
 
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 
-/** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
+/** One step as a single string: its action, then its cost and time, kept inside the gate's 20..600 characters. */
 export function stepText(step: FarmStep): string {
   let s = `${step.text} Cost: ${step.cost}. Time: ${step.time}.`;
   if (s.length > 600) s = `${s.slice(0, 596)}...`;
@@ -359,7 +364,7 @@ function gasFor(chain: string): { deposit: string; weekly: string } {
   return { deposit: '$2', weekly: '$1' };
 }
 
-/** The category's main action, in the words a farmer can follow. */
+/** The category's main action, in words a farmer can follow. */
 function actionFor(p: SnapshotProtocol, capital: number, chain: string): string {
   const c = (p.category ?? '').toLowerCase();
   const name = p.name;
