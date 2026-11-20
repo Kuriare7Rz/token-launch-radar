@@ -145,6 +145,27 @@
     if (c.indexOf('governance') >= 0) return 'a vote';
     return 'a deposit, a swap or a vote';
   }
+  // The exit step, word for word the same derivation as lib/model.ts's exitStepFor:
+  // the trigger follows the protocol's age and the unwind follows its category.
+  // It must stay identical there, because the detail drawer compares the page's
+  // plan against board.json, and a drifted eighth step would read as stale data.
+  function exitStepFor(p) {
+    var chain = chainOf(p);
+    var gas = gasFor(chain);
+    var c = (p.category || '').toLowerCase();
+    var age = p.age_days;
+    var trigger;
+    if (age === null || age === undefined || age < 180) trigger = "no token is announced yet, so check the protocol's own announcements every two weeks";
+    else if (age >= 1095) trigger = 'the launch window has stayed shut for years, so treat the position as yield-only and exit on the first token hint';
+    else trigger = 'the token is announced, the points program ends, or weekly TVL falls by a fifth';
+    var unwind;
+    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) unwind = 'repay any borrow first, then withdraw the supply in two halves a day apart';
+    else if (c.indexOf('dex') >= 0 || c.indexOf('liquidity manager') >= 0) unwind = 'remove the liquidity in two halves a day apart so one block does not strand the whole position';
+    else if (c.indexOf('restak') >= 0 || c.indexOf('staking') >= 0) unwind = 'unstake and wait out the unbonding period before moving the funds';
+    else if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0 || c.indexOf('options') >= 0) unwind = 'close the trade first, then withdraw the margin in two halves a day apart';
+    else unwind = 'withdraw the position in two halves a day apart so one bad block does not strand it all';
+    return { text: 'Plan the exit before you need it: ' + trigger + '. When it happens, claim any points or rewards first, then ' + unwind + '.', cost: 'about ' + gas.deposit + ' of gas to exit on ' + chain, time: '30 minutes to unwind' };
+  }
   function stepText(step) {
     var s = step.text + ' Cost: ' + step.cost + '. Time: ' + step.time + '.';
     if (s.length > 600) s = s.slice(0, 596) + '...';
@@ -173,7 +194,29 @@
       { text: "Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.", cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
       { text: 'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'nothing but the log', time: '5 minutes' }
     );
+    steps.push(exitStepFor(p));
     return steps.map(stepText);
+  }
+
+  // The drawer's risks: short lines drawn from the row's own figures — growth,
+  // chain count, age, the implied-value gap, the watchlist — never from a
+  // hand-written list of names. Always at least two lines, never more than four;
+  // the section sits below the farm plan, past the first screen.
+  function riskLines(row) {
+    var lines = [];
+    var growth = row.change_7d;
+    if (growth !== null && growth !== undefined && growth < 0) lines.push('TVL fell ' + fmtPct(growth) + ' over the last 7 days, so the farm starts on a falling line and the implied value already bends down with it.');
+    var chains = row.chains || [];
+    if (chains.length === 1) lines.push('One chain only: a fee spike or an outage on ' + chains[0] + ' strands the whole position.');
+    if (chains.length >= 5) lines.push('Five or more chains: the position is spread thin, and moving between them costs gas every time.');
+    if (row.age_days === null || row.age_days === undefined) lines.push('No listing date on record, so the model scores the age at its 365-day default instead of a measured one.');
+    else if (row.age_days < 180) lines.push('Listed ' + fmtAge(row.age_days) + ' ago: the protocol is young, so its points program and token timeline can still change.');
+    else if (row.age_days >= 1095) lines.push('Running ' + fmtAge(row.age_days) + ' with no token: the launch window has stayed shut for years, so farm for the yield, not the airdrop.');
+    if (row.implied_value_usd < row.tvl_usd * 0.1) lines.push('Implied value is under a tenth of TVL: the model pays far less than the deposits behind it.');
+    if (row.watchlist) lines.push('On the watchlist: the floor is $50M of TVL with no token, so a token announcement can move the queue fast.');
+    lines.push('Implied value is a model estimate, not a price: the token may never be issued, and points may pay nothing.');
+    lines.push('Farm only with funds you can leave in place: an early exit can cost more in gas than the position earns.');
+    return lines.slice(0, 4);
   }
 
   // The filter state lives in the URL hash, so a view can be linked and shared.
@@ -432,6 +475,10 @@
         var tail = at >= 0 ? s.slice(at + 1) : '';
         return el('li', null, el('b', { text: action }), el('span', { class: 'cost', text: tail }));
       }))
+    ));
+    dialog.appendChild(el('section', { class: 'detail-section' },
+      el('h3', { text: 'Risks & caveats' }),
+      el('ul', { class: 'risks' }, riskLines(row).map(function (line) { return el('li', { text: line }); }))
     ));
     if (typeof dialog.showModal === 'function') {
       if (!dialog.open) dialog.showModal();

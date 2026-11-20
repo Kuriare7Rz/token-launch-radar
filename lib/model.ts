@@ -414,7 +414,37 @@ function weeklyActionFor(p: SnapshotProtocol): string {
 }
 
 /**
- * A protocol's farm plan: seven steps, each an action with a cost and a time. The plan is derived
+ * The exit step: when to unwind, what to watch, and how to get out without stranding funds.
+ * The trigger follows the protocol's age — a young protocol has no token on the horizon yet,
+ * an old one has kept its launch window shut for years — and the unwind follows its category,
+ * so a lender repays first and a liquidity provider pulls out in halves. It is always the
+ * last step, so the first seven steps keep their order and wording.
+ */
+function exitStepFor(p: SnapshotProtocol, age: number | null): FarmStep {
+  const chain = chainOf(p);
+  const gas = gasFor(chain);
+  const c = (p.category ?? '').toLowerCase();
+  const trigger =
+    age === null || age < 180
+      ? "no token is announced yet, so check the protocol's own announcements every two weeks"
+      : age >= 1095
+        ? 'the launch window has stayed shut for years, so treat the position as yield-only and exit on the first token hint'
+        : 'the token is announced, the points program ends, or weekly TVL falls by a fifth';
+  let unwind: string;
+  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) unwind = 'repay any borrow first, then withdraw the supply in two halves a day apart';
+  else if (c.includes('dex') || c.includes('liquidity manager')) unwind = 'remove the liquidity in two halves a day apart so one block does not strand the whole position';
+  else if (c.includes('restak') || c.includes('staking')) unwind = 'unstake and wait out the unbonding period before moving the funds';
+  else if (c.includes('perpetual') || c.includes('derivative') || c.includes('options')) unwind = 'close the trade first, then withdraw the margin in two halves a day apart';
+  else unwind = 'withdraw the position in two halves a day apart so one bad block does not strand it all';
+  return {
+    text: `Plan the exit before you need it: ${trigger}. When it happens, claim any points or rewards first, then ${unwind}.`,
+    cost: `about ${gas.deposit} of gas to exit on ${chain}`,
+    time: '30 minutes to unwind',
+  };
+}
+
+/**
+ * A protocol's farm plan: eight steps, each an action with a cost and a time. The plan is derived
  * from the protocol's own record (category, chains, TVL, age), never from a hand-written list of names.
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
@@ -473,6 +503,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: '5 minutes',
     },
   );
+  steps.push(exitStepFor(p, age));
   return steps;
 }
 
